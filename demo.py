@@ -1,72 +1,9 @@
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
-import traceback
-import pdfplumber
+from docx import Document
 from docx.opc.exceptions import PackageNotFoundError
 import os
-from docx.shared import Pt, Cm
-from docx.oxml.ns import qn
-from docx2pdf import convert
-from docx import Document
-
 from pathlib import Path
-
-from docx.shared import Pt
-
-def calculate_max_chars(cell_width_inches, font_size_pt, font_name='Calibri'):
-    # 近似计算字符数（英文更准确，中文需要调整）
-    avg_char_width_inch = font_size_pt / 72 * 0.5  # 近似值
-    return int(cell_width_inches / avg_char_width_inch)
-
-def add_content_with_auto_wrap(doc, sentences):
-    table = doc.tables[0]
-
-    # 获取第一列的宽度（英寸）
-    cell_width = table.columns[0].width.inches
-
-    # 计算每行最大字符数
-    font_size = 5  # 10pt
-    max_chars = 29
-
-    # 分割内容
-
-    content_lines_raw = []
-    flag = 0
-    for content in sentences:
-        if flag == 0:
-            content = "问：" + content.get("1.0", tk.END).strip()
-            flag = 1
-        else:
-            content = "答：" + content.get("1.0", tk.END).strip()
-            flag = 0
-        content_lines_raw.append(content)
-        # for char in content:
-        #     if len(current_line) >= max_chars:
-        #         content_lines.append(current_line)
-        #         current_line = char
-        #     else:
-        #         current_line += char
-        # if current_line:
-        #     content_lines.append(current_line)
-    lines = []
-    for p in content_lines_raw:
-        lines.append(get_wrapped_lines("temp/template.docx", p, 17.17))
-
-    # 写入表格
-    for p in lines:
-        for i, line in enumerate(p):
-            row = table.add_row()
-            for j in range(1, len(row.cells)):
-                row.cells[0].merge(row.cells[j])
-
-            cell = row.cells[0]
-            cell.text = line
-
-            paragraph = cell.paragraphs[0]
-            for run in paragraph.runs:
-                run.font.name = "宋体"  # 设置字体
-                run.font.size = Pt(16)  # 设置字号（16磅）
-
 
 
 class InquiryGenerator:
@@ -84,7 +21,6 @@ class InquiryGenerator:
 
     def setup_ui(self):
         """创建用户界面"""
-
         main_frame = ttk.Frame(self.root, padding=20)
         main_frame.pack(fill=tk.BOTH, expand=True)
 
@@ -178,9 +114,7 @@ class InquiryGenerator:
         a_entry = tk.Text(a_frame, height=3, width=125, wrap=tk.WORD)
         a_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
 
-        self.qa_rows.append(q_entry)
-        self.qa_rows.append(a_entry)
-
+        self.qa_rows.append((q_entry, a_entry))
         self.qa_canvas.yview_moveto(1)  # 滚动到底部
 
     def locate_template(self):
@@ -206,7 +140,7 @@ class InquiryGenerator:
         search_paths = [
             Path("询问笔录模板.doc"),
             Path("询问笔录模板.docx"),
-            Path(__file__).parent / "temp/询问笔录模板.docx",
+            Path(__file__).parent / "templates/询问笔录模板.docx",
             Path.home() / "Desktop/询问笔录模板.docx"
         ]
         for path in search_paths:
@@ -248,14 +182,15 @@ class InquiryGenerator:
             # 单独修改时间
             doc.tables[0].rows[5].cells[1].text = f"{self.entries["询问时间起"].get()}至{self.entries["询问时间止"].get()}"
 
-            add_content_with_auto_wrap(doc, self.qa_rows)
 
 
 
             # 插入问答内容
             # for q, a in self.qa_rows:
 
-
+            new_row = doc.tables[0].add_row()
+            for i in range(1, len(new_row.cells)):
+                new_row.cells[0].merge(new_row.cells[i])
 
             # start, end = 0, len(self.qa_rows)
             # for row_index in range(7, len(doc.tables[0].rows), 2):
@@ -296,87 +231,6 @@ class InquiryGenerator:
     def run(self):
         self.root.mainloop()
 
-
-def convert_docx_to_pdf(docx_path, pdf_path):
-    """将 DOCX 转为 PDF"""
-    convert(docx_path, pdf_path)
-
-
-def count_lines_in_pdf_cell(pdf_path):
-    """从 PDF 中读取并计算行数"""
-    with pdfplumber.open(pdf_path) as pdf:
-        page = pdf.pages[0]
-        text = page.extract_text()
-        lines = text.split('\n') if text else []
-        return lines
-
-
-def write_text_to_cell(doc, text, cell_width_cm):
-    """将文本写入表格最后一行第一个单元格"""
-    table = doc.tables[0]
-    last_row = table.rows[-1]
-    cell = last_row.cells[0]
-
-    # 设置宽度（注意：python-docx 实际不会生效，只写属性）
-    cell.width = Cm(cell_width_cm)
-
-    # 保存原始文本（所有段落）
-    original_paragraphs = [para.text for para in cell.paragraphs]
-
-    # 清空现有段落内容
-    cell.text = ""
-    paragraph = cell.paragraphs[0]
-    run = paragraph.add_run(text)
-    run.font.name = '宋体'
-    run.font.size = Pt(16)
-    run._element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
-
-    return original_paragraphs  # 返回用于还原
-
-
-def restore_cell_text(doc, original_paragraphs):
-    """还原原始文本到单元格"""
-    table = doc.tables[0]
-    last_row = table.rows[-1]
-    cell = last_row.cells[0]
-    cell.text = ""  # 清空
-
-    for i, text in enumerate(original_paragraphs):
-        if i == 0:
-            para = cell.paragraphs[0]
-        else:
-            para = cell.add_paragraph()
-        run = para.add_run(text)
-        run.font.name = '宋体'
-        run.font.size = Pt(16)
-        run._element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
-
-
-def get_wrapped_lines(docx_path, text, cell_width_cm):
-    """计算文本在单元格中换了几行"""
-    # 加载文档并备份
-    doc = Document(docx_path)
-
-    # 写入新文本前，保存原始内容
-    original_paragraphs = write_text_to_cell(doc, text, cell_width_cm)
-    doc.save(docx_path)
-
-    # 转 PDF
-    pdf_path = docx_path.replace('.docx', '.pdf')
-    convert_docx_to_pdf(docx_path, pdf_path)
-
-    # 统计 PDF 行数
-    lines = count_lines_in_pdf_cell(pdf_path)
-
-    # 还原原始内容并保存
-    doc = Document(docx_path)
-    restore_cell_text(doc, original_paragraphs)
-    doc.save(docx_path)
-
-    # 删除临时 PDF
-    if os.path.exists(pdf_path):
-        os.remove(pdf_path)
-    return lines
 
 if __name__ == "__main__":
     app = InquiryGenerator()
