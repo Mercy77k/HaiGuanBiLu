@@ -4,13 +4,17 @@ from docx import Document
 from docx.opc.exceptions import PackageNotFoundError
 import os
 from pathlib import Path
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.shared import Pt
+from docx.oxml.ns import qn
+from docxtpl import DocxTemplate
 
 
 class InquiryGenerator:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("海关询问笔录生成系统 v3.3")
-        self.root.geometry("1000x800")
+        self.root.geometry("1100x1000")
 
         # 初始化界面
         self.setup_ui()
@@ -42,7 +46,8 @@ class InquiryGenerator:
             ("工作单位", 3, 0), ("单位地址", 3, 1),
             ("询问地点", 4, 1),
             ("职务", 3, 2), ("联系方式", 4, 0),
-            ("询问时间起", 5, 0), ("询问时间止", 6, 0),
+            ("询问时间起", 5, 0), ("询问时间止", 5, 1),
+            ("询问单位", 4, 2)
         ]
 
         # keys_location = {
@@ -62,8 +67,11 @@ class InquiryGenerator:
             if label == "性别":
                 entry = ttk.Combobox(frame, values=["男", "女"], width=15)
             elif "时间" in label:
-                entry = ttk.Entry(frame, width=40,  )
+                entry = ttk.Entry(frame, width=40, )
                 ttk.Label(frame).pack(side=tk.LEFT)
+            elif "询问单位" in label:
+                entry = ttk.Entry(frame, width=25)
+                entry.insert(0, "中华人民共和国厦门海关")
             else:
                 entry = ttk.Entry(frame, width=25)
 
@@ -169,8 +177,6 @@ class InquiryGenerator:
             # 加载模板
             doc = Document(self.template_path)
 
-
-
             # 填充基本信息到表格
             for table in doc.tables:
                 for row_index, row in enumerate(table.rows):
@@ -180,17 +186,54 @@ class InquiryGenerator:
                             row.cells[cell_index + 1].text = f"{self.entries[text].get()}"
 
             # 单独修改时间
-            doc.tables[0].rows[5].cells[1].text = f"{self.entries["询问时间起"].get()}至{self.entries["询问时间止"].get()}"
+            doc.tables[0].rows[5].cells[
+                1].text = f"{self.entries["询问时间起"].get()}至{self.entries["询问时间止"].get()}"
 
+            # 单独修改表头
+            title_context = {"title": self.entries["询问单位"].get()}
 
-
+            doc_tpl = DocxTemplate(self.template_path)
+            doc_tpl.render(title_context)
 
             # 插入问答内容
             # for q, a in self.qa_rows:
 
-            new_row = doc.tables[0].add_row()
-            for i in range(1, len(new_row.cells)):
-                new_row.cells[0].merge(new_row.cells[i])
+            # 插入问答内容
+            # 获取目标表格
+            table = doc.tables[0]  # 选择你需要操作的表格
+
+            # 添加新行并合并为一个单元格
+            new_row = table.add_row()
+            num_cells = len(new_row.cells)
+            merged_cell = new_row.cells[0]
+            for i in range(1, num_cells):
+                merged_cell = merged_cell.merge(new_row.cells[i])
+
+            # 清空合并单元格中默认的段落内容
+            merged_cell._element.clear_content()
+
+            # 在合并后的单元格中逐段添加问答
+            for q, a in self.qa_rows:
+                q_text = q.get("1.0", tk.END).strip()
+                a_text = a.get("1.0", tk.END).strip()
+
+                if q_text:
+                    para_q = merged_cell.add_paragraph()
+                    para_q.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+                    run_q = para_q.add_run(f"问：{q_text}")
+                    run_q.font.name = '宋体'
+                    run_q.font.size = Pt(16)
+                    run_q.underline = True
+                    run_q._element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
+
+                if a_text:
+                    para_a = merged_cell.add_paragraph()
+                    para_a.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+                    run_a = para_a.add_run(f"答：{a_text}")
+                    run_a.font.name = '宋体'
+                    run_a.font.size = Pt(16)
+                    run_a.underline = True
+                    run_a._element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
 
             # start, end = 0, len(self.qa_rows)
             # for row_index in range(7, len(doc.tables[0].rows), 2):
@@ -201,16 +244,16 @@ class InquiryGenerator:
             #         start += 1
             #         continue
 
-                #
-                # q_text = q.get("1.0", tk.END).strip()
-                # a_text = a.get("1.0", tk.END).strip()
-                #
-                # if q_text:
-                #     new_q = doc.add_paragraph(f"问：{q_text}")
-                #     new_q.runs[0].bold = True
-                # if a_text:
-                #     doc.add_paragraph(f"答：{a_text}")
-                # doc.add_paragraph()
+            #
+            # q_text = q.get("1.0", tk.END).strip()
+            # a_text = a.get("1.0", tk.END).strip()
+            #
+            # if q_text:
+            #     new_q = doc.add_paragraph(f"问：{q_text}")
+            #     new_q.runs[0].bold = True
+            # if a_text:
+            #     doc.add_paragraph(f"答：{a_text}")
+            # doc.add_paragraph()
 
             # 保存文件
             output_path = filedialog.asksaveasfilename(
@@ -222,6 +265,16 @@ class InquiryGenerator:
                 doc.save(output_path)
                 messagebox.showinfo("成功", f"文档已保存到:\n{output_path}")
                 os.startfile(output_path)  # 自动打开文件
+
+                # 单独修改表头
+                title_context = {"title": self.entries["询问单位"].get()}
+                doc_tpl = DocxTemplate(output_path)
+                doc_tpl.render(title_context)
+                doc_tpl.save(output_path)
+
+
+
+
 
         except PackageNotFoundError:
             messagebox.showerror("错误", "模板文件损坏或不是有效的.docx文件")
